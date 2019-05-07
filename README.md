@@ -1,4 +1,4 @@
-### Avalon-ST JTAG Server and Client
+# Avalon-ST JTAG Server and Client
 
 ---
 
@@ -8,13 +8,13 @@ Include the system component under *qsys_comp* in your Qsys project.
 
 ---
 
-## system-console
+### system-console
 
-# Server
+## Server
 
 Just execute *./run_server* script under *system-console* folder. 
 
-# Python Client
+## Python Client
 
 Execute any script under *system-console/jtag_client/python/tests/* folder.
 
