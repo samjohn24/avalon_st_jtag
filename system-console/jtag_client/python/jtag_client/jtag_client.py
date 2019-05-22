@@ -13,7 +13,6 @@ import struct
 import time
 import collections
 import threading
-import Queue
  
 class AlteraJTAGClient:
 
@@ -43,7 +42,7 @@ class AlteraJTAGClient:
 
 class BytestreamClient(threading.Thread):
 
-    def __init__(self, queue, host='localhost', port=2541, jtag_packet_len=48*10, buf_packet_len=10, buf_maxlen=2):
+    def __init__(self, queue, host='localhost', port=2541, jtag_packet_len=48*10, buf_packet_len=10, buf_maxlen=2, buf_num=1, mode="packet"):
         threading.Thread.__init__(self)
         self.queue = queue
         self.host = host
@@ -51,6 +50,8 @@ class BytestreamClient(threading.Thread):
         self.num_misses = 0
         self.buf_packet_len = buf_packet_len
         self.jtag_packet_len = jtag_packet_len
+        self.mode = mode
+        self.buf_num = buf_num
         
         # Socket create and connect
         self.conn = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -58,6 +59,9 @@ class BytestreamClient(threading.Thread):
         
         # Buffer deque create
         self.buffer = collections.deque(maxlen=buf_maxlen)
+
+        if mode == "frame_buffer_tag":
+            self.buffers_tag = [collections.deque(maxlen=buf_maxlen) for i in range(buf_num)] 
 
     def str2short(self, hexstr):
         """
@@ -115,6 +119,42 @@ class BytestreamClient(threading.Thread):
         else:
             return data[:-3]
         
+    def RecvFrame(self, verbose=False):
+
+        # Receive packet length
+        try:
+            packet_len = int(self.conn.recv(6))+2
+            if verbose and packet_len>2:
+                print 'packet len: %d'%packet_len
+        except ValueError:
+            return ""
+
+        # Receive packet
+        data = ""
+        while (len(data) < packet_len):
+            start = time.time()
+
+            if verbose and packet_len>2:
+                print '\ttry to receive %d bytes' % (packet_len-len(data))
+            packet = self.conn.recv(packet_len - len(data))
+
+            if verbose and packet_len>2:
+                print '\treceived %d bytes: "%s"' % (len(packet),list(packet))
+                print '\tproc recv packet: %.2f ms' %((time.time()-start)*1e3) 
+
+            data += packet
+            data = data[:-1].replace('\r\n','\n')+data[-1]
+            if verbose and packet_len>2:
+                print '\tproc total packet: %.2f ms' %((time.time()-start)*1e3) 
+        
+        if verbose and packet_len>2:
+            print 'total received %d bytes: "%s"' % (len(data),list(data))
+
+        tag = data[:2]
+        data = data[2:]
+
+        return tag + data[:4*((len(data)-2)/4)]
+
     def RecvPacketRaw(self, verbose=False):
 
         # Receive packet length
@@ -149,6 +189,9 @@ class BytestreamClient(threading.Thread):
         return data[:4*((len(data)-2)/4)]
 
     def RawToInt (self, data, verbose=False):
+        if data == "":
+            return [] 
+
         start = time.time()
 
         data_out = ""
@@ -190,18 +233,25 @@ class BytestreamClient(threading.Thread):
     def getData (self, verbose=False):
         return self.RawToInt(self.buffer.pop()[0], verbose)
 
-    def getDataN (self, num_packets, verbose=False):
+    def getDataN (self, num_packets, frame_tag=0, verbose=False):
         data = ""
+        tag = ""
         i = 0
         while i < num_packets:
-            try:
-              data += self.buffer.pop()[0]
-              i += 1 
-            except IndexError:
-              if verbose:
-                print "Warning: Buffer is empty"
+            if self.mode == "frame":
+              packet = self.buffer.pop()[0]
+              data += packet[2:]
+              tag += "00" + packet[:2]
+            elif self.mode == "frame_buffer_tag":
+              if frame_tag in range(self.buf_num):
+                  packet = self.buffers_tag[frame_tag].pop()[0]
+                  data += packet
+            else:
+              packet = self.buffer.pop()[0]
+              data += packet
+            i += 1 
         
-        return self.RawToInt(data, verbose)
+        return self.RawToInt(data, verbose), self.RawToInt(tag, verbose)
 
     def run(self):
         verbose = False
@@ -210,25 +260,54 @@ class BytestreamClient(threading.Thread):
 
         while (True):
             period = time.time()
+            
+            if self.mode == "packet":
+                while(len(data_raw) < desired_len):
 
-            while(len(data_raw) < desired_len):
+                    # Request samples
+                    self.conn.send(str(self.jtag_packet_len) + '\n')
 
+                    # Receive raw packet
+                    data_raw += self.RecvPacketRaw(verbose)
+
+                # Save into buffer
+                self.buffer.appendleft([data_raw[:desired_len]])
+
+                # Clear buffered samples
+                data_raw = data_raw[desired_len:]
+
+            elif self.mode == "frame":
                 # Request samples
-                self.conn.send(str(self.jtag_packet_len) + '\n')
+                self.conn.send(str(-2) + '\n')
 
                 # Receive raw packet
-                data_raw += self.RecvPacketRaw(verbose)
+                data_raw = self.RecvFrame(verbose)
+
+                # Save into buffer
+                self.buffer.appendleft([data_raw])
+
+            elif self.mode == "frame_buffer_tag":
+                # Request samples
+                self.conn.send(str(-2) + '\n')
+
+                # Receive raw packet
+                data_raw = self.RecvFrame(verbose)
                 
-                #time.sleep(0.001)
-            
-            # Save into buffer
-            self.buffer.appendleft([data_raw[:desired_len]])
+                # Tag
+                #print data_raw[:2]
+                tag = int(str(data_raw[:2]),16)
+                #print "%d" %tag
+                
+                # Save into respective buffer
+                if tag in range(self.buf_num):
+                    self.buffers_tag[tag].appendleft([data_raw[2:]])
+
+            else:
+                raise ValueError('Invalid mode') 
 
             if verbose:
                 print 'buffer len %d:' %(len(self.buffer)),self.buffer
 
-            # Clear buffered samples
-            data_raw = data_raw[desired_len:]
             
             # Send message
             #self.queue.put("new data elem")

@@ -15,6 +15,7 @@ source jtag_server/default_master.tcl
 set p_address 0
 set conn_timeout 20000
 set verbose 0
+set verbose_basic 0
  
 ### Start server
 # port: socket port
@@ -73,7 +74,11 @@ proc IncomingData {sock} {
         #set recv_data [get_packet $p_path [expr 2*$line]]
         set recv_data [get_packet_improved $p_path [expr 2*$line]]
         puts $sock $recv_data
-      } else {
+      } elseif {$line == -2} {
+        #set recv_data [parse_packet [get_frame $p_path]]
+        set recv_data [parse_packet [get_n_frames $p_path 1]]
+        puts $sock $recv_data
+      } elseif {$line == -1} {
 	puts $sock [flush_fifo $p_path]
       }
     #puts $recv_data
@@ -250,6 +255,102 @@ proc get_packet_large {p_path num_bytes} {
   return $packet
 }
 
+# Get frames
+proc get_frame {p_path} {
+  global conn_timeout
+  global verbose
+  global verbose_basic
+
+  set t0 [clock clicks -millisec]
+
+  if {$verbose_basic} {
+    puts "read header init..."
+  }
+
+  # Get header
+  set recv_header {}
+  while 1 {
+    lappend recv_header {*}[bytestream_receive $p_path [expr 2-[llength $recv_header]]]
+    if { [llength $recv_header] >= 2 } break
+  }
+  
+  if {$verbose_basic} {
+    puts "header: $recv_header"
+  }
+
+  # Required num bytes
+  set req_bytes [expr wide(2*pow(2, [lindex $recv_header 0]))]
+
+  if {$verbose} {
+    puts "num bytes: $req_bytes"
+  }
+
+  # Get data
+  set recv_bytes {}
+  while 1 {
+    lappend recv_bytes {*}[bytestream_receive $p_path [expr $req_bytes-[llength $recv_bytes]]]
+    if { [llength $recv_bytes] >= [expr $req_bytes] } break
+    #else {after 1 }
+  }
+
+  if {$verbose} {
+    puts "recv bytes ([llength $recv_bytes] bytes): $recv_bytes"
+    puts "\ttime recv: [expr {[clock clicks -millisec]-$t0}] ms" 
+  }
+
+  # data with tag
+  set recv_bytes_tag {}
+  lappend recv_bytes_tag [lindex $recv_header 1]
+  lappend recv_bytes_tag {*}$recv_bytes
+
+  if {$verbose} {
+    puts "data with tag: $recv_bytes_tag"
+  }
+
+  return $recv_bytes_tag
+
+}
+
+proc get_n_frames {p_path N} {
+  set i 0
+  set packet {}
+  while {$i < $N} {
+    lappend packet {*}[get_frame $p_path]
+    incr i
+  }  
+  return $packet
+}
+
+proc parse_packet {recv_bytes} {
+  global verbose
+
+  # Parse data
+  set parsed {}
+  foreach byte $recv_bytes {
+    append parsed [format %02x $byte]
+  }
+
+  if {$verbose} {
+    puts "data parsed: $parsed"
+  }
+
+  # Packet
+  set packet "$parsed"
+  if {$verbose} {
+    puts "packet: $packet"
+  }
+
+  set packet_len [string length $packet]
+  set whole_packet "[format %06d $packet_len]$packet"
+
+  if {$verbose} {
+    show_packet $whole_packet
+  }
+
+  #puts "\ttime recv total: [expr {[clock clicks -millisec]-$t0}] ms" 
+  return $whole_packet
+}
+
 # Get packet large
 proc get_packet_improved {p_path num_bytes} {
   global conn_timeout
@@ -317,8 +418,10 @@ proc flush_fifo {p_path} {
 
   set recv_data {}
 
-  while { [llength $recv_data] > 0 } {
+  while 1 {
     set recv_data [bytestream_receive $p_path $num_bytes]
+
+    if { [llength $recv_data] <=0 } break
   }
 
   return 1

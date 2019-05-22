@@ -24,18 +24,27 @@ import mic_if_hal as mic_if
 #   General parameters
 # =======================
 
-MIC_IF_BASE = 0x4080000
 
 JTAG_PACKET_LEN = 48*10 #10ms
 BUF_PACKET_LEN = 10  # 100ms
-FRAME_LEN = 10     #1s
-BUF_MAX_LEN = 100
+
+FRAME_LEN_WIDTH = np.round(np.log2(JTAG_PACKET_LEN*BUF_PACKET_LEN)).astype(int)
+
+SHOW_FRAME_NUM = 10     #1s
+BUF_MAX_LEN = 10
 NUM_CHS = 40
 
-SHOW_FRAME = JTAG_PACKET_LEN*BUF_PACKET_LEN*FRAME_LEN
-
 ANGLE = 90.
-CH_TESTED = 0xff
+CH_TESTED = 0x00
+
+MODE = "frame" # "frame" or "packet"
+
+# =======================
+#    Local parameters
+# =======================
+
+MIC_IF_BASE = 0x4080000
+SHOW_FRAME = JTAG_PACKET_LEN*BUF_PACKET_LEN*SHOW_FRAME_NUM
 
 # =======================
 #      Configuration
@@ -50,13 +59,24 @@ mic_failing = [6]
 # Microphone interface
 mic = mic_if.mic_if_hal(jtag_master,num_chs=NUM_CHS, MIC_IF_BASE=MIC_IF_BASE, mic_failing=mic_failing)
 
+# Mic disable
+mic.enable(False)
+
+if MODE == "frame":
+    # Microphone frame mode enable
+    mic.set_frame_tag(10)
+
+    # Microphone frame mode enable
+    mic.set_frame_len(FRAME_LEN_WIDTH)
+    
+    # Microphone frame mode enable
+    mic.frame_mode(True)
+
 # Microphone initialization
 mic.init(clk="1.25M")
 
 # Init array
 mic.init_array_bbb_30()
-
-test = False
 
 # Select beamformer channel
 mic.avalon_st_bytestream(True, CH_TESTED)
@@ -70,13 +90,22 @@ jtag_master.StartBytestreamServer()
 queue = Queue.Queue()
 
 # Create Bytetream client
-jtag_bytestream = jtag.BytestreamClient(queue, jtag_packet_len=JTAG_PACKET_LEN, buf_packet_len=BUF_PACKET_LEN, buf_maxlen=BUF_MAX_LEN)
+jtag_bytestream = jtag.BytestreamClient(queue, jtag_packet_len=JTAG_PACKET_LEN, buf_packet_len=BUF_PACKET_LEN, buf_maxlen=BUF_MAX_LEN, mode=MODE)
 
 # Define client as daemon
 jtag_bytestream.setDaemon(True)
 
+# Flush FIFO
+jtag_bytestream.flushFIFO(True)
+
+# Mic enable
+mic.enable(True)
+
 # Start Bytestream client
 jtag_bytestream.start()
+
+# Mic config
+mic.show_config()
 
 # Data container
 y_data = np.zeros(SHOW_FRAME)
@@ -96,7 +125,7 @@ def plot_data(i):
     global start
     global period
 
-    data_int = np.array(jtag_bytestream.getDataN(3))
+    data_int, _  = np.array(jtag_bytestream.getDataN(3))
 
     y_data = np.concatenate((y_data[-(SHOW_FRAME-len(data_int)):],data_int))
       

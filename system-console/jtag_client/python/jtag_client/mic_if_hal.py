@@ -8,6 +8,8 @@
  -FHDR-------------------------------------------------------------------------
 """
 import numpy as np
+import threading
+import time
 
 class mic_if_hal:
 
@@ -16,16 +18,24 @@ class mic_if_hal:
     MIC_IF_CTRL_2_REG_ADDR = 1
     MIC_IF_CTRL_3_REG_ADDR = 0x02
     MIC_IF_CTRL_4_REG_ADDR = 0x03
+    MIC_IF_FRAME_CTRL_REG_ADDR = 0x04
     MIC_IF_STATUS_REG_ADDR = 0x06
     MIC_IF_SUM_DATA_REG_ADDR = 0x0A
     MIC_IF_DATA_REG_ADDR = 0x10
     MIC_IF_DELAY_REG_ADDR = 0x50
+
+    MIC_IF_OFF_FRAMEEN = 0
+    MIC_IF_OFF_FRAMELEN = 4
+    MIC_IF_MASK_FRAMELEN = 0x000000f0
+    MIC_IF_OFF_FRAMETAG = 8
+    MIC_IF_MASK_FRAMETAG = 0x0000ff00
     
     MIC_IF_OFF_MICEN = 31
     MIC_IF_MASK_MICEN = 0x80000000
     MIC_IF_OFF_SAT = 30
     MIC_IF_MASK_SAT = 0x40000000
     MIC_IF_OFF_ROUND = 29
+
     MIC_IF_MASK_ROUND = 0x20000000
     MIC_IF_OFF_LRSEL = 28
     MIC_IF_MASK_LRSEL = 0x10000000
@@ -128,6 +138,25 @@ class mic_if_hal:
             self.clr_bit(self.MIC_IF_CTRL_1_REG_ADDR, self.MIC_IF_OFF_ROUND)
             print "[MIC IF]: Round-off disabled"
 
+    def frame_mode(self, value):
+        if (value):
+            self.set_bit(self.MIC_IF_FRAME_CTRL_REG_ADDR, self.MIC_IF_OFF_FRAMEEN)
+            print "[MIC IF]: Frame mode enabled"
+        else:
+            self.clr_bit(self.MIC_IF_FRAME_CTRL_REG_ADDR, self.MIC_IF_OFF_FRAMEEN)
+            print "[MIC IF]: Frame mode disabled"
+
+    def set_frame_len(self, value):
+        self.set_mask(self.MIC_IF_FRAME_CTRL_REG_ADDR, value, self.MIC_IF_OFF_FRAMELEN, \
+             self.MIC_IF_MASK_FRAMELEN) 
+        print "[MIC IF]: FRAMELEN=%x"%(value)
+
+    def set_frame_tag(self, value, verbose=False):
+        self.set_mask(self.MIC_IF_FRAME_CTRL_REG_ADDR, value, self.MIC_IF_OFF_FRAMETAG, \
+             self.MIC_IF_MASK_FRAMETAG) 
+        if verbose:
+            print "[MIC IF]: FRAMETAG=%x"%(value)
+
     def channel_en(self, ch_num, value):
         if (value):
             if ch_num < 32:
@@ -219,6 +248,7 @@ class mic_if_hal:
         print "[MIC IF]: CTRL_2: %#010x" %self.read_reg(self.MIC_IF_CTRL_2_REG_ADDR)
         print "[MIC IF]: CTRL_3: %#010x" %self.read_reg(self.MIC_IF_CTRL_3_REG_ADDR)
         print "[MIC IF]: CTRL_4: %#010x" %self.read_reg(self.MIC_IF_CTRL_4_REG_ADDR)
+        print "[MIC IF]: FRAME_CTRL: %#010x" %self.read_reg(self.MIC_IF_FRAME_CTRL_REG_ADDR)
         print "[MIC IF]: STATUS: %#010x" %self.read_reg(self.MIC_IF_STATUS_REG_ADDR)
     
     def show_data(self):
@@ -248,7 +278,7 @@ class mic_if_hal:
         self.avalon_st_bytestream(True)
         self.avalon_st_filter(False)
         self.avalon_st_beam(False)
-        self.enable(True)
+        #self.enable(True)
         
         self.show_config()
         self.show_data()
@@ -278,14 +308,23 @@ class mic_if_hal:
 
     def init_array_bbb_30 (self):
         
-        array_pos = [[0.065,0.060,0.], [0.065,0.080,0.], [0.065,0.110,0.], [0.065,0.150,0.], [0.065,0.190,0.], \
-                     [0.076,0.060,0.], [0.076,0.080,0.], [0.076,0.110,0.], [0.076,0.150,0.], [0.076,0.190,0.], \
-                     [0.098,0.060,0.], [0.098,0.080,0.], [0.098,0.110,0.], [0.098,0.150,0.], [0.098,0.190,0.], \
-                     [0.131,0.060,0.], [0.131,0.080,0.], [0.131,0.110,0.], [0.131,0.150,0.], [0.131,0.190,0.], \
-                     [0.153,0.060,0.], [0.153,0.080,0.], [0.153,0.110,0.], [0.153,0.150,0.], [0.153,0.190,0.], \
-                     [0.197,0.060,0.], [0.197,0.080,0.], [0.197,0.110,0.], [0.197,0.150,0.], [0.197,0.190,0.], \
-                     [0.241,0.060,0.], [0.241,0.080,0.], [0.241,0.110,0.], [0.241,0.150,0.], [0.241,0.190,0.], \
-                     [0.263,0.060,0.], [0.263,0.080,0.], [0.263,0.110,0.], [0.263,0.150,0.], [0.263,0.190,0.] ]
+        #array_pos = [[0.065,0.060,0.], [0.065,0.080,0.], [0.065,0.110,0.], [0.065,0.150,0.], [0.065,0.190,0.], \
+        #             [0.076,0.060,0.], [0.076,0.080,0.], [0.076,0.110,0.], [0.076,0.150,0.], [0.076,0.190,0.], \
+        #             [0.098,0.060,0.], [0.098,0.080,0.], [0.098,0.110,0.], [0.098,0.150,0.], [0.098,0.190,0.], \
+        #             [0.131,0.060,0.], [0.131,0.080,0.], [0.131,0.110,0.], [0.131,0.150,0.], [0.131,0.190,0.], \
+        #             [0.153,0.060,0.], [0.153,0.080,0.], [0.153,0.110,0.], [0.153,0.150,0.], [0.153,0.190,0.], \
+        #             [0.197,0.060,0.], [0.197,0.080,0.], [0.197,0.110,0.], [0.197,0.150,0.], [0.197,0.190,0.], \
+        #             [0.241,0.060,0.], [0.241,0.080,0.], [0.241,0.110,0.], [0.241,0.150,0.], [0.241,0.190,0.], \
+        #             [0.263,0.060,0.], [0.263,0.080,0.], [0.263,0.110,0.], [0.263,0.150,0.], [0.263,0.190,0.] ]
+
+        array_pos = [[0.065,0.,0.060], [0.065,0.,0.080], [0.065,0.,0.110], [0.065,0.,0.150], [0.065,0.,0.190], \
+                     [0.076,0.,0.060], [0.076,0.,0.080], [0.076,0.,0.110], [0.076,0.,0.150], [0.076,0.,0.190], \
+                     [0.098,0.,0.060], [0.098,0.,0.080], [0.098,0.,0.110], [0.098,0.,0.150], [0.098,0.,0.190], \
+                     [0.131,0.,0.060], [0.131,0.,0.080], [0.131,0.,0.110], [0.131,0.,0.150], [0.131,0.,0.190], \
+                     [0.153,0.,0.060], [0.153,0.,0.080], [0.153,0.,0.110], [0.153,0.,0.150], [0.153,0.,0.190], \
+                     [0.197,0.,0.060], [0.197,0.,0.080], [0.197,0.,0.110], [0.197,0.,0.150], [0.197,0.,0.190], \
+                     [0.241,0.,0.060], [0.241,0.,0.080], [0.241,0.,0.110], [0.241,0.,0.150], [0.241,0.,0.190], \
+                     [0.263,0.,0.060], [0.263,0.,0.080], [0.263,0.,0.110], [0.263,0.,0.150], [0.263,0.,0.190] ]
 
         for i in range(self.num_chs):
             if i in self.mic_failing: 
@@ -312,8 +351,8 @@ class mic_if_hal:
         angle_azim_deg = angle_azim*180./np.pi
         
         # source wave vector
-        #rbf_u = 1./c*np.array([[np.cos(angle_polar),0., -np.sin(angle_polar)]]).transpose()
-        rbf_u = 1./c*np.array([[np.cos(angle_polar)*np.cos(angle_azim),np.cos(angle_polar)*np.sin(angle_azim), -np.sin(angle_polar)]]).transpose()
+        #rbf_u = 1./c*np.array([[np.cos(angle_polar)*np.cos(angle_azim),np.cos(angle_polar)*np.sin(angle_azim), -np.sin(angle_polar)]]).transpose()
+        rbf_u = 1./c*np.array([[np.cos(angle_polar)*np.cos(angle_azim),np.sin(angle_polar)*np.cos(angle_azim), np.sin(angle_azim)]]).transpose()
 
         # delay
         for i in np.arange(len(r)):
@@ -329,5 +368,38 @@ class mic_if_hal:
         
         for i in np.arange(len(r)):
             self.set_delay(i, ndel_norm[i], verbose=False)
+
+        return ndel_norm
         
+class mic_if_beamformer(threading.Thread):
+
+    def __init__(self, mic, angles_polar, angles_azim=[0], delay_sec=0.100):
+        threading.Thread.__init__(self)
+        self.mic = mic
+        self.delay_sec = delay_sec
+        self.angles_polar = angles_polar
+        self.angles_azim = angles_azim
+        self.num_pts_polar = len(angles_polar)
+        self.num_pts_azim = len(angles_azim)
+
+    def run(self):
+        i = 0
+        j = 0
         
+        while (True):
+
+            # Set angles
+            self.mic.set_bf_angle(self.angles_polar[i], self.angles_azim[j], verbose=False)
+            # Set frame tag
+            self.mic.set_frame_tag(j*self.num_pts_polar + i)
+            # Delaying
+            time.sleep(self.delay_sec)
+
+            if i < (self.num_pts_polar-1):
+                i += 1
+            else:
+                i = 0
+                if j < (self.num_pts_azim-1):
+                    j += 1
+                else:
+                    j = 0
