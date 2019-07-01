@@ -11,6 +11,8 @@
 
 import sys
 sys.path.append('../jtag_client')
+sys.path.append('../../../../../mic_if/hal/avalon_st_jtag/python')
+
 import matplotlib.pyplot as plt
 import numpy as np
 import matplotlib.animation as animation
